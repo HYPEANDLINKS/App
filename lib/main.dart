@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
 
 void main() {
   runApp(const MyApp());
@@ -325,10 +327,103 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
-class NewPage extends StatelessWidget {
+class NewPage extends StatefulWidget {
   final String title;
 
   const NewPage({super.key, required this.title});
+
+  @override
+  State<NewPage> createState() => _NewPageState();
+}
+
+class _NewPageState extends State<NewPage> {
+  String? _aiResponse;
+  bool _isLoading = true;
+  String? _error;
+  final String _apiUrl = 'https://xp7k-production.up.railway.app';
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchAIResponse();
+  }
+
+  Future<void> _fetchAIResponse() async {
+    try {
+      final response = await http.post(
+        Uri.parse('$_apiUrl/api/chat'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'message': widget.title}),
+      );
+
+      if (response.statusCode == 200) {
+        // Handle streaming response (newline-delimited JSON)
+        String fullResponse = '';
+        final lines = response.body.split('\n');
+        
+        for (final line in lines) {
+          if (line.trim().isEmpty) continue;
+          try {
+            final data = jsonDecode(line);
+            if (data['token'] != null) {
+              fullResponse += data['token'] as String;
+              // Update UI as tokens come in
+              if (mounted) {
+                setState(() {
+                  _aiResponse = fullResponse;
+                  _isLoading = false;
+                });
+              }
+            } else if (data['response'] != null && data['done'] == true) {
+              // Final complete response
+              if (mounted) {
+                setState(() {
+                  _aiResponse = data['response'] as String;
+                  _isLoading = false;
+                });
+              }
+              break;
+            } else if (data['error'] != null) {
+              if (mounted) {
+                setState(() {
+                  _error = data['error'] as String;
+                  _isLoading = false;
+                });
+              }
+              break;
+            }
+          } catch (e) {
+            // Skip invalid JSON lines
+            continue;
+          }
+        }
+        
+        // If we didn't get a final response, use accumulated tokens
+        if (_aiResponse == null && fullResponse.isNotEmpty) {
+          if (mounted) {
+            setState(() {
+              _aiResponse = fullResponse;
+              _isLoading = false;
+            });
+          }
+        }
+      } else {
+        if (mounted) {
+          setState(() {
+            _error = 'Error: ${response.statusCode}';
+            _isLoading = false;
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = 'Failed to connect: $e';
+          _isLoading = false;
+        });
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -346,7 +441,7 @@ class NewPage extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.start,
               children: [
                 Text(
-                  title,
+                  widget.title,
                   style: const TextStyle(
                     fontFamily: 'Aeroport',
                     fontSize: 20,
@@ -355,16 +450,48 @@ class NewPage extends StatelessWidget {
                   ),
                   textAlign: TextAlign.left,
                 ),
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontFamily: 'Aeroport',
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.black,
+                const SizedBox(height: 16),
+                if (_isLoading)
+                  const Padding(
+                    padding: EdgeInsets.only(top: 8.0),
+                    child: CircularProgressIndicator(),
+                  )
+                else if (_error != null)
+                  Text(
+                    _error!,
+                    style: const TextStyle(
+                      fontFamily: 'Aeroport',
+                      fontSize: 15,
+                      fontWeight: FontWeight.w500,
+                      color: Colors.red,
+                    ),
+                    textAlign: TextAlign.left,
+                  )
+                else if (_aiResponse != null)
+                  Expanded(
+                    child: SingleChildScrollView(
+                      child: Text(
+                        _aiResponse!,
+                        style: const TextStyle(
+                          fontFamily: 'Aeroport',
+                          fontSize: 15,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.black,
+                        ),
+                        textAlign: TextAlign.left,
+                      ),
+                    ),
+                  )
+                else
+                  const Text(
+                    'No response received',
+                    style: TextStyle(
+                      fontFamily: 'Aeroport',
+                      fontSize: 15,
+                      fontWeight: FontWeight.w500,
+                      color: Colors.black,
+                    ),
                   ),
-                  textAlign: TextAlign.left,
-                ),
               ],
             ),
           ),
