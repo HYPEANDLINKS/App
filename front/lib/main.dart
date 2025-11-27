@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:http/http.dart' as http;
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:js' as js;
@@ -107,7 +108,14 @@ class DiagonalLinePainter extends CustomPainter {
   }
 }
 
-void main() {
+void main() async {
+  // Load .env file for local development
+  try {
+    await dotenv.load(fileName: ".env");
+    print('Loaded .env file for local development');
+  } catch (e) {
+    print('No .env file found (this is OK for production): $e');
+  }
   runApp(const MyApp());
 }
 
@@ -2189,6 +2197,24 @@ class _NewPageState extends State<NewPage> with TickerProviderStateMixin {
 
     _isLoadingApiKey = true;
     try {
+      // First, try to load from .env file (for local development)
+      try {
+        final envApiKey = dotenv.env['API_KEY'];
+        if (envApiKey != null && envApiKey.isNotEmpty) {
+          _apiKey = envApiKey;
+          if (mounted) {
+            setState(() {
+              _apiKey = envApiKey;
+            });
+          }
+          print('API key loaded from .env file (local development)');
+          _isLoadingApiKey = false;
+          return;
+        }
+      } catch (e) {
+        print('No API key found in .env file: $e');
+      }
+
       // Try to fetch API key from Vercel serverless function
       // This reads from Vercel's environment variables at runtime
       final uri = Uri.parse('/api/config');

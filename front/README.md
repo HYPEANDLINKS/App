@@ -35,12 +35,27 @@ This is the Flutter frontend for the XP7K Telegram Mini App.
 
 ### Getting Started
 
-1. Get dependencies:
+1. **Set up local environment variables** (for local development):
+   
+   Create a `.env` file in the `front` directory:
+   ```bash
+   cd front
+   echo "API_KEY=your_actual_api_key_here" > .env
+   ```
+   
+   Or manually create `.env` with:
+   ```
+   API_KEY=your_actual_api_key_here
+   ```
+   
+   > **Note**: The `.env` file is gitignored and won't be committed. For production, the API key is loaded from Vercel environment variables.
+
+2. Get dependencies:
    ```bash
    flutter pub get
    ```
 
-2. Run the app in development mode:
+3. Run the app in development mode:
 
    **Quick Dev (Git Bash / Mac / Linux):**
    ```bash
