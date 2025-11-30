@@ -355,8 +355,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       case 'hour1': // h: DD/MM
         return '${timestamp.day.toString().padLeft(2, '0')}/${timestamp.month.toString().padLeft(2, '0')}';
 
-      case 'min15': // q: MM/YY 22:19
-        return '${timestamp.month.toString().padLeft(2, '0')}/${timestamp.year.toString().substring(2)} ${timestamp.hour.toString().padLeft(2, '0')}:${timestamp.minute.toString().padLeft(2, '0')}';
+      case 'min15': // q: DD/MM HH:mm
+        return '${timestamp.day.toString().padLeft(2, '0')}/${timestamp.month.toString().padLeft(2, '0')} ${timestamp.hour.toString().padLeft(2, '0')}:${timestamp.minute.toString().padLeft(2, '0')}';
 
       case 'min1': // m: 22:19, yesterday or 22:19, today
         final timeStr =
@@ -377,18 +377,23 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
 
   /// Build timestamp widget with proper styling for min1 resolution
   Widget _buildTimestampWidget(DateTime? timestamp) {
+    Widget textWidget;
+
     if (timestamp == null) {
-      return const Text(
+      textWidget = const Text(
         "--/--",
         style: TextStyle(
           fontSize: 10,
           color: Color(0xFF818181),
+          height: 1.0, // Fixed line height to prevent layout shift
+        ),
+        textHeightBehavior: TextHeightBehavior(
+          applyHeightToFirstAscent: false,
+          applyHeightToLastDescent: false,
         ),
       );
-    }
-
-    // For min1 resolution, use RichText to style "Today"/"Yesterday" with regular font weight
-    if (_selectedResolution == 'min1') {
+    } else if (_selectedResolution == 'min1') {
+      // For min1 resolution, use RichText to style "Today"/"Yesterday" with regular font weight
       final now = DateTime.now();
       final today = DateTime(now.year, now.month, now.day);
       final yesterday = today.subtract(const Duration(days: 1));
@@ -398,11 +403,12 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           '${timestamp.hour.toString().padLeft(2, '0')}:${timestamp.minute.toString().padLeft(2, '0')}';
 
       if (timestampDate == today) {
-        return RichText(
+        textWidget = RichText(
           text: TextSpan(
             style: const TextStyle(
               fontSize: 10,
               color: Color(0xFF818181),
+              height: 1.0, // Fixed line height to prevent layout shift
             ),
             children: [
               TextSpan(text: timeStr),
@@ -412,13 +418,18 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               ),
             ],
           ),
+          textHeightBehavior: const TextHeightBehavior(
+            applyHeightToFirstAscent: false,
+            applyHeightToLastDescent: false,
+          ),
         );
       } else if (timestampDate == yesterday) {
-        return RichText(
+        textWidget = RichText(
           text: TextSpan(
             style: const TextStyle(
               fontSize: 10,
               color: Color(0xFF818181),
+              height: 1.0, // Fixed line height to prevent layout shift
             ),
             children: [
               TextSpan(text: timeStr),
@@ -428,17 +439,47 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               ),
             ],
           ),
+          textHeightBehavior: const TextHeightBehavior(
+            applyHeightToFirstAscent: false,
+            applyHeightToLastDescent: false,
+          ),
+        );
+      } else {
+        // Fallback for min1
+        textWidget = Text(
+          _formatTimestamp(timestamp),
+          style: const TextStyle(
+            fontSize: 10,
+            color: Color(0xFF818181),
+            height: 1.0, // Fixed line height to prevent layout shift
+          ),
+          textHeightBehavior: const TextHeightBehavior(
+            applyHeightToFirstAscent: false,
+            applyHeightToLastDescent: false,
+          ),
         );
       }
+    } else {
+      // For other resolutions, use regular Text
+      textWidget = Text(
+        _formatTimestamp(timestamp),
+        style: const TextStyle(
+          fontSize: 10,
+          color: Color(0xFF818181),
+          height: 1.0, // Fixed line height to prevent layout shift
+        ),
+        textHeightBehavior: const TextHeightBehavior(
+          applyHeightToFirstAscent: false,
+          applyHeightToLastDescent: false,
+        ),
+      );
     }
 
-    // For other resolutions, use regular Text
-    return Text(
-      _formatTimestamp(timestamp),
-      style: const TextStyle(
-        fontSize: 10,
-        color: Color(0xFF818181),
-      ),
+    // Wrap in Align to ensure consistent vertical centering
+    // Use textHeightBehavior to prevent baseline shifts
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: textWidget,
     );
   }
 
@@ -547,35 +588,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         print('Chart points count: ${points?.length ?? 0}');
 
         if (points != null && points.isNotEmpty) {
-          // Extract timestamp from the first point (oldest after reversal)
-          // API returns newest-first, so last point is oldest, first point is newest
-          final firstPoint = points[points.length - 1];
-          final lastPoint = points[0];
-
-          final firstTimeStr = firstPoint['time'] as String?;
-          final lastTimeStr = lastPoint['time'] as String?;
-
-          DateTime? firstTimestamp;
-          DateTime? lastTimestamp;
-
-          if (firstTimeStr != null) {
-            try {
-              firstTimestamp = DateTime.parse(firstTimeStr).toLocal();
-            } catch (e) {
-              print('Error parsing first timestamp: $e');
-            }
-          }
-
-          if (lastTimeStr != null) {
-            try {
-              lastTimestamp = DateTime.parse(lastTimeStr).toLocal();
-            } catch (e) {
-              print('Error parsing last timestamp: $e');
-            }
-          }
-
-          // Extract and convert price values
-          var prices = <double>[];
+          // Extract and convert price values along with timestamps
+          // Collect data points with both valid price and timestamp
+          var priceDataPoints = <Map<String, dynamic>>[];
           print('Parsing ${points.length} chart points...');
           for (var point in points) {
             try {
@@ -593,10 +608,30 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 continue;
               }
 
+              // Extract timestamp
+              final timeStr = point['time'] as String?;
+              if (timeStr == null) {
+                print('Warning: point missing time field: $point');
+                continue;
+              }
+
               // Convert to real value: value * 10^(-decimals)
               final value = int.parse(valueStr);
               final realValue = value * math.pow(10, -decimals);
-              prices.add(realValue.toDouble());
+
+              // Parse timestamp
+              DateTime? timestamp;
+              try {
+                timestamp = DateTime.parse(timeStr).toLocal();
+              } catch (e) {
+                print('Error parsing timestamp: $e, timeStr: $timeStr');
+                continue;
+              }
+
+              priceDataPoints.add({
+                'price': realValue.toDouble(),
+                'timestamp': timestamp,
+              });
             } catch (e) {
               print('Error parsing chart point: $e, point: $point');
               continue;
@@ -604,16 +639,37 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           }
 
           print(
-              'Successfully parsed ${prices.length} prices from ${points.length} points');
+              'Successfully parsed ${priceDataPoints.length} data points from ${points.length} points');
 
-          if (prices.isEmpty) {
-            print('Error: No prices could be parsed from chart data');
+          if (priceDataPoints.isEmpty) {
+            print(
+                'Error: No valid data points could be parsed from chart data');
             _handleChartError('No price data available');
             return;
           }
 
           // Reverse the array - API likely returns newest-first, but we need oldest-first for chart
-          prices = prices.reversed.toList();
+          priceDataPoints = priceDataPoints.reversed.toList();
+
+          // Extract prices and timestamps from valid data points
+          var prices =
+              priceDataPoints.map((dp) => dp['price'] as double).toList();
+
+          // Extract timestamps from actual first and last valid data points
+          DateTime? firstTimestamp;
+          DateTime? lastTimestamp;
+
+          if (priceDataPoints.isNotEmpty) {
+            firstTimestamp = priceDataPoints.first['timestamp'] as DateTime?;
+            lastTimestamp = priceDataPoints.last['timestamp'] as DateTime?;
+            print(
+                'Extracted timestamps - First: $firstTimestamp, Last: $lastTimestamp');
+            if (firstTimestamp != null && lastTimestamp != null) {
+              final duration = lastTimestamp.difference(firstTimestamp);
+              print(
+                  'Time range: ${duration.inDays} days, ${duration.inHours % 24} hours, ${duration.inMinutes % 60} minutes');
+            }
+          }
 
           // Normalize prices to 0.0-1.0 range for chart display
           if (prices.isNotEmpty) {
@@ -1551,17 +1607,23 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                                             ),
                                                 ),
                                               ),
-                                              const SizedBox(height: 5),
-                                              Row(
-                                                mainAxisAlignment:
-                                                    MainAxisAlignment
-                                                        .spaceBetween,
-                                                children: [
-                                                  _buildTimestampWidget(
-                                                      _chartFirstTimestamp),
-                                                  _buildTimestampWidget(
-                                                      _chartLastTimestamp),
-                                                ],
+                                              const SizedBox(height: 5.0),
+                                              SizedBox(
+                                                height:
+                                                    15.0, // Fixed height to prevent layout shift
+                                                child: Row(
+                                                  mainAxisAlignment:
+                                                      MainAxisAlignment
+                                                          .spaceBetween,
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.center,
+                                                  children: [
+                                                    _buildTimestampWidget(
+                                                        _chartFirstTimestamp),
+                                                    _buildTimestampWidget(
+                                                        _chartLastTimestamp),
+                                                  ],
+                                                ),
                                               )
                                             ],
                                           ),
