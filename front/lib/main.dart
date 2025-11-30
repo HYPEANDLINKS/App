@@ -9,8 +9,9 @@ import 'analytics.dart';
 
 class DiagonalLinePainter extends CustomPainter {
   final List<double>? dataPoints; // Optional: for real data later
+  final int? selectedPointIndex;
 
-  DiagonalLinePainter({this.dataPoints});
+  DiagonalLinePainter({this.dataPoints, this.selectedPointIndex});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -90,11 +91,45 @@ class DiagonalLinePainter extends CustomPainter {
     }
 
     canvas.drawPath(path, paint);
+
+    // Draw selected point highlight if a point is selected
+    if (selectedPointIndex != null &&
+        selectedPointIndex! >= 0 &&
+        selectedPointIndex! < pointCount) {
+      final selectedX = selectedPointIndex! * stepSize;
+      final selectedY =
+          size.height - (points[selectedPointIndex!] * size.height);
+
+      // Draw 5px black square with 1.33px white stroke
+      const squareSize = 5.0;
+      final squareRect = RRect.fromRectAndRadius(
+        Rect.fromCenter(
+          center: Offset(selectedX, selectedY),
+          width: squareSize,
+          height: squareSize,
+        ),
+        Radius.zero,
+      );
+
+      // Draw black fill
+      final fillPaint = Paint()
+        ..color = Colors.black
+        ..style = PaintingStyle.fill;
+      canvas.drawRRect(squareRect, fillPaint);
+
+      // Draw white stroke
+      final strokePaint = Paint()
+        ..color = Colors.white
+        ..strokeWidth = 1.33
+        ..style = PaintingStyle.stroke;
+      canvas.drawRRect(squareRect, strokePaint);
+    }
   }
 
   @override
   bool shouldRepaint(DiagonalLinePainter oldDelegate) {
-    return oldDelegate.dataPoints != dataPoints;
+    return oldDelegate.dataPoints != dataPoints ||
+        oldDelegate.selectedPointIndex != selectedPointIndex;
   }
 }
 
@@ -257,6 +292,12 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   DateTime? _chartFirstTimestamp;
   DateTime? _chartLastTimestamp;
 
+  // Original chart data for point selection (prices and timestamps)
+  List<Map<String, dynamic>>? _originalChartData;
+
+  // Selected point for interactive chart
+  int? _selectedPointIndex;
+
   // Rate limiting for dyor API (1 call per second)
   DateTime? _lastChartApiCall;
   int _chartRetryCount = 0;
@@ -327,6 +368,91 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     };
   }
 
+  /// Handle chart pointer to find closest point using hybrid method:
+  /// - If pointer is close to chart: use Euclidean distance (x and y) for precise selection
+  /// - If pointer is far from chart: use x-axis only for quick selection
+  void _handleChartPointer(Offset localPosition, Size chartSize) {
+    if (_chartDataPoints == null ||
+        _chartDataPoints!.isEmpty ||
+        _originalChartData == null) {
+      return;
+    }
+
+    final pointCount = _chartDataPoints!.length;
+    if (pointCount == 0) return;
+
+    // Validate chart size
+    if (chartSize.width <= 0 || chartSize.height <= 0) {
+      return;
+    }
+
+    // Calculate step size (same as in painter)
+    final stepSize = pointCount > 1 ? chartSize.width / (pointCount - 1) : 0.0;
+
+    // First, find the closest point by x-axis to determine proximity
+    int closestByX = 0;
+    double minXDistance = double.infinity;
+
+    for (int i = 0; i < pointCount; i++) {
+      final pointX = i * stepSize;
+      final xDistance = (localPosition.dx - pointX).abs();
+      if (xDistance < minXDistance) {
+        minXDistance = xDistance;
+        closestByX = i;
+      }
+    }
+
+    // Calculate the y position of the closest x point to check vertical distance
+    final normalizedValue = _chartDataPoints![closestByX];
+    final closestPointY =
+        chartSize.height - (normalizedValue * chartSize.height);
+    final verticalDistance = (localPosition.dy - closestPointY).abs();
+
+    // Threshold: use a combination of fixed pixels and percentage of chart height
+    // This ensures reasonable proximity detection for both small and large charts
+    // - Minimum: 40 pixels (ensures reasonable proximity even for small charts)
+    // - Maximum: 15% of chart height (scales with chart size for larger charts)
+    // Result: uses whichever is larger, so small charts get at least 40px, large charts scale up
+    // This means: if pointer is within ~40-60px of the chart line, use precise Euclidean selection
+    const fixedThreshold = 40.0; // pixels - minimum threshold
+    final percentageThreshold = chartSize.height * 0.15; // 15% of chart height
+    final proximityThreshold = math.max(fixedThreshold, percentageThreshold);
+    final isCloseToChart = verticalDistance < proximityThreshold;
+
+    int closestIndex;
+    if (isCloseToChart) {
+      // Close to chart: use Euclidean distance for precise selection
+      double minDistance = double.infinity;
+      closestIndex = 0;
+
+      for (int i = 0; i < pointCount; i++) {
+        final pointX = i * stepSize;
+        final normalizedValue = _chartDataPoints![i];
+        final pointY = chartSize.height - (normalizedValue * chartSize.height);
+
+        // Calculate Euclidean distance (scalar length)
+        final dx = localPosition.dx - pointX;
+        final dy = localPosition.dy - pointY;
+        final distance = math.sqrt(dx * dx + dy * dy);
+
+        if (distance < minDistance) {
+          minDistance = distance;
+          closestIndex = i;
+        }
+      }
+    } else {
+      // Far from chart: use x-axis only for quick selection
+      closestIndex = closestByX;
+    }
+
+    // Only update state if the selected index actually changed
+    if (_selectedPointIndex != closestIndex) {
+      setState(() {
+        _selectedPointIndex = closestIndex;
+      });
+    }
+  }
+
   /// Format price value for display (up to 5 decimal places, removing trailing zeros)
   String _formatPrice(double price) {
     // Format to 5 decimal places
@@ -338,6 +464,59 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           .replaceAll(RegExp(r'\.$'), '');
     }
     return formatted;
+  }
+
+  /// Calculate the maximum width needed for price column
+  /// Takes into account min, max, and selected point prices
+  double _calculateMaxPriceWidth() {
+    const textStyle = TextStyle(
+      color: Color(0xFF818181),
+      fontSize: 10,
+    );
+
+    double maxWidth = 0.0;
+
+    // Check min price
+    if (_chartMinPrice != null) {
+      final minPriceText = _formatPrice(_chartMinPrice!);
+      final textPainter = TextPainter(
+        text: TextSpan(text: minPriceText, style: textStyle),
+        textDirection: TextDirection.ltr,
+      );
+      textPainter.layout();
+      maxWidth = math.max(maxWidth, textPainter.width);
+    }
+
+    // Check max price
+    if (_chartMaxPrice != null) {
+      final maxPriceText = _formatPrice(_chartMaxPrice!);
+      final textPainter = TextPainter(
+        text: TextSpan(text: maxPriceText, style: textStyle),
+        textDirection: TextDirection.ltr,
+      );
+      textPainter.layout();
+      maxWidth = math.max(maxWidth, textPainter.width);
+    }
+
+    // Check selected point price
+    if (_selectedPointIndex != null &&
+        _originalChartData != null &&
+        _selectedPointIndex! < _originalChartData!.length) {
+      final selectedData = _originalChartData![_selectedPointIndex!];
+      final price = selectedData['price'] as double?;
+      if (price != null) {
+        final selectedPriceText = _formatPrice(price);
+        final textPainter = TextPainter(
+          text: TextSpan(text: selectedPriceText, style: textStyle),
+          textDirection: TextDirection.ltr,
+        );
+        textPainter.layout();
+        maxWidth = math.max(maxWidth, textPainter.width);
+      }
+    }
+
+    // Add a small padding for safety and return default if no prices
+    return maxWidth > 0 ? maxWidth + 2.0 : 60.0;
   }
 
   /// Format timestamp based on resolution
@@ -373,6 +552,443 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       default:
         return timestamp.toString();
     }
+  }
+
+  /// Build selected point timestamp row aligned with the dot
+  Widget _buildSelectedPointTimestampRow() {
+    if (_selectedPointIndex == null ||
+        _originalChartData == null ||
+        _selectedPointIndex! >= _originalChartData!.length ||
+        _chartDataPoints == null) {
+      return const SizedBox.shrink();
+    }
+
+    final selectedData = _originalChartData![_selectedPointIndex!];
+    final timestamp = selectedData['timestamp'] as DateTime?;
+    if (timestamp == null) return const SizedBox.shrink();
+
+    // Build the text widget first to measure it
+    Widget timestampTextWidget;
+    if (_selectedResolution == 'min1') {
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final yesterday = today.subtract(const Duration(days: 1));
+      final timestampDate =
+          DateTime(timestamp.year, timestamp.month, timestamp.day);
+      final timeStr =
+          '${timestamp.hour.toString().padLeft(2, '0')}:${timestamp.minute.toString().padLeft(2, '0')}';
+
+      if (timestampDate == today) {
+        timestampTextWidget = RichText(
+          text: TextSpan(
+            style: const TextStyle(
+              fontSize: 10,
+              color: Color(0xFF818181),
+              height: 1.0,
+            ),
+            children: [
+              TextSpan(text: timeStr),
+              const TextSpan(
+                text: ', today',
+                style: TextStyle(fontWeight: FontWeight.normal),
+              ),
+            ],
+          ),
+          textHeightBehavior: const TextHeightBehavior(
+            applyHeightToFirstAscent: false,
+            applyHeightToLastDescent: false,
+          ),
+        );
+      } else if (timestampDate == yesterday) {
+        timestampTextWidget = RichText(
+          text: TextSpan(
+            style: const TextStyle(
+              fontSize: 10,
+              color: Color(0xFF818181),
+              height: 1.0,
+            ),
+            children: [
+              TextSpan(text: timeStr),
+              const TextSpan(
+                text: ', yesterday',
+                style: TextStyle(fontWeight: FontWeight.normal),
+              ),
+            ],
+          ),
+          textHeightBehavior: const TextHeightBehavior(
+            applyHeightToFirstAscent: false,
+            applyHeightToLastDescent: false,
+          ),
+        );
+      } else {
+        timestampTextWidget = Text(
+          _formatTimestamp(timestamp),
+          style: const TextStyle(
+            fontSize: 10,
+            color: Color(0xFF818181),
+            height: 1.0,
+          ),
+          textHeightBehavior: const TextHeightBehavior(
+            applyHeightToFirstAscent: false,
+            applyHeightToLastDescent: false,
+          ),
+        );
+      }
+    } else {
+      timestampTextWidget = Text(
+        _formatTimestamp(timestamp),
+        style: const TextStyle(
+          fontSize: 10,
+          color: Color(0xFF818181),
+          height: 1.0,
+        ),
+        textHeightBehavior: const TextHeightBehavior(
+          applyHeightToFirstAscent: false,
+          applyHeightToLastDescent: false,
+        ),
+      );
+    }
+
+    // Measure text width and calculate exact positioning
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (!constraints.hasBoundedWidth || constraints.maxWidth.isInfinite) {
+          // Fallback to center alignment if constraints are infinite
+          return Align(
+            alignment: Alignment.center,
+            child: timestampTextWidget,
+          );
+        }
+
+        // Measure text width - need to handle RichText case
+        const textStyle = TextStyle(
+          fontSize: 10,
+          color: Color(0xFF818181),
+        );
+        TextSpan textSpan;
+        if (_selectedResolution == 'min1') {
+          final now = DateTime.now();
+          final today = DateTime(now.year, now.month, now.day);
+          final yesterday = today.subtract(const Duration(days: 1));
+          final timestampDate =
+              DateTime(timestamp.year, timestamp.month, timestamp.day);
+          final timeStr =
+              '${timestamp.hour.toString().padLeft(2, '0')}:${timestamp.minute.toString().padLeft(2, '0')}';
+
+          if (timestampDate == today) {
+            textSpan = TextSpan(
+              style: textStyle,
+              children: [
+                TextSpan(text: timeStr),
+                const TextSpan(
+                  text: ', today',
+                  style: TextStyle(fontWeight: FontWeight.normal),
+                ),
+              ],
+            );
+          } else if (timestampDate == yesterday) {
+            textSpan = TextSpan(
+              style: textStyle,
+              children: [
+                TextSpan(text: timeStr),
+                const TextSpan(
+                  text: ', yesterday',
+                  style: TextStyle(fontWeight: FontWeight.normal),
+                ),
+              ],
+            );
+          } else {
+            textSpan = TextSpan(
+              text: _formatTimestamp(timestamp),
+              style: textStyle,
+            );
+          }
+        } else {
+          textSpan = TextSpan(
+            text: _formatTimestamp(timestamp),
+            style: textStyle,
+          );
+        }
+
+        final textPainter = TextPainter(
+          text: textSpan,
+          textDirection: TextDirection.ltr,
+        );
+        textPainter.layout();
+        final textWidth = textPainter.width;
+
+        // Calculate dot's x position on the chart
+        final pointCount = _chartDataPoints!.length;
+        final xRatio =
+            pointCount > 1 ? _selectedPointIndex! / (pointCount - 1) : 0.0;
+        final dotX = xRatio * constraints.maxWidth;
+
+        // Calculate where text center should be (at dot position)
+        final textCenterX = dotX;
+        final textLeft = textCenterX - (textWidth / 2);
+        final textRight = textCenterX + (textWidth / 2);
+
+        // Determine final alignment: center on dot unless text would overflow
+        double finalAlignmentX;
+        if (textLeft < 0) {
+          // Text would overflow left edge - stick to left
+          finalAlignmentX = -1.0;
+        } else if (textRight > constraints.maxWidth) {
+          // Text would overflow right edge - stick to right
+          finalAlignmentX = 1.0;
+        } else {
+          // Text fits - center on dot
+          finalAlignmentX = 0.0;
+        }
+
+        // Use Transform to position text exactly at dot when centered
+        if (finalAlignmentX == 0.0) {
+          // Center on dot: calculate offset to move text center to dot position
+          final offsetX = dotX - (constraints.maxWidth / 2);
+          return Transform.translate(
+            offset: Offset(offsetX, 0),
+            child: Center(
+              child: timestampTextWidget,
+            ),
+          );
+        } else {
+          // Edge case: align to edge
+          return Align(
+            alignment: Alignment(finalAlignmentX, 0.0),
+            child: timestampTextWidget,
+          );
+        }
+      },
+    );
+  }
+
+  /// Build normal price column with max and min prices positioned at exact chart points
+  Widget _buildNormalPriceColumn() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (!constraints.hasBoundedHeight || constraints.maxHeight.isInfinite) {
+          // Fallback to spaceBetween if constraints are infinite
+          return Column(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                _chartMaxPrice != null
+                    ? _formatPrice(_chartMaxPrice!)
+                    : "0.00000",
+                style: const TextStyle(
+                  color: Color(0xFF818181),
+                  fontSize: 10,
+                ),
+                textAlign: TextAlign.right,
+              ),
+              Text(
+                _chartMinPrice != null
+                    ? _formatPrice(_chartMinPrice!)
+                    : "0.00000",
+                style: const TextStyle(
+                  color: Color(0xFF818181),
+                  fontSize: 10,
+                ),
+                textAlign: TextAlign.right,
+              ),
+            ],
+          );
+        }
+
+        const textHeightBehavior = TextHeightBehavior(
+          applyHeightToFirstAscent: false,
+          applyHeightToLastDescent: false,
+        );
+
+        // Calculate positions: max price is at top (normalizedValue = 1.0 -> y = 0)
+        // min price is at bottom (normalizedValue = 0.0 -> y = height)
+        const maxPriceY = 0.0; // Max price is at top of chart
+        final minPriceY =
+            constraints.maxHeight; // Min price is at bottom of chart
+
+        final maxPriceText =
+            _chartMaxPrice != null ? _formatPrice(_chartMaxPrice!) : "0.00000";
+        final minPriceText =
+            _chartMinPrice != null ? _formatPrice(_chartMinPrice!) : "0.00000";
+
+        // Use the same text center offset as selected point price for consistency
+        const textCenterOffset = 4.5; // Same as selected point price
+
+        // Position max price: center it at y = 0 (top)
+        // textTop + textCenterOffset = 0, so textTop = -textCenterOffset
+        // But we need to clamp to 0 if it would go negative
+        const maxPriceTop = maxPriceY - textCenterOffset;
+        const maxPriceTopClamped = maxPriceTop < 0 ? 0.0 : maxPriceTop;
+
+        // Position min price: center it at y = height (bottom)
+        // textTop + textCenterOffset = height, so textTop = height - textCenterOffset
+        final minPriceTop = minPriceY - textCenterOffset;
+        // Clamp to ensure text doesn't overflow bottom
+        final minPriceTopClamped =
+            (minPriceTop + textCenterOffset * 2) > constraints.maxHeight
+                ? constraints.maxHeight - (textCenterOffset * 2)
+                : minPriceTop;
+
+        return Stack(
+          children: [
+            // Max price at top
+            Positioned(
+              top: maxPriceTopClamped,
+              left: 0,
+              right: 0,
+              child: Text(
+                maxPriceText,
+                style: const TextStyle(
+                  color: Color(0xFF818181),
+                  fontSize: 10,
+                  height: 1.0,
+                ),
+                textAlign: TextAlign.right,
+                textHeightBehavior: textHeightBehavior,
+              ),
+            ),
+            // Min price at bottom
+            Positioned(
+              top: minPriceTopClamped,
+              left: 0,
+              right: 0,
+              child: Text(
+                minPriceText,
+                style: const TextStyle(
+                  color: Color(0xFF818181),
+                  fontSize: 10,
+                  height: 1.0,
+                ),
+                textAlign: TextAlign.right,
+                textHeightBehavior: textHeightBehavior,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// Build selected point price column aligned with the dot
+  Widget _buildSelectedPointPriceColumn() {
+    if (_selectedPointIndex == null ||
+        _originalChartData == null ||
+        _selectedPointIndex! >= _originalChartData!.length ||
+        _chartDataPoints == null) {
+      return const SizedBox.shrink();
+    }
+
+    final selectedData = _originalChartData![_selectedPointIndex!];
+    final price = selectedData['price'] as double?;
+    if (price == null) return const SizedBox.shrink();
+
+    final priceText = _formatPrice(price);
+    final priceTextWidget = Text(
+      priceText,
+      style: const TextStyle(
+        color: Color(0xFF818181),
+        fontSize: 10,
+        height: 1.0,
+      ),
+      textAlign: TextAlign.right,
+      textHeightBehavior: const TextHeightBehavior(
+        applyHeightToFirstAscent: false,
+        applyHeightToLastDescent: false,
+      ),
+    );
+
+    // Measure text height and calculate exact positioning
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (!constraints.hasBoundedHeight || constraints.maxHeight.isInfinite) {
+          // Fallback to center alignment if constraints are infinite
+          return Align(
+            alignment: Alignment.center,
+            child: priceTextWidget,
+          );
+        }
+
+        // Measure text height - use the same text style as the widget
+        const textStyle = TextStyle(
+          fontSize: 10,
+          color: Color(0xFF818181),
+          height: 1.0,
+        );
+        final textPainter = TextPainter(
+          text: TextSpan(text: priceText, style: textStyle),
+          textDirection: TextDirection.ltr,
+          textHeightBehavior: const TextHeightBehavior(
+            applyHeightToFirstAscent: false,
+            applyHeightToLastDescent: false,
+          ),
+        );
+        textPainter.layout();
+
+        // Get the actual visual center of the text
+        // With textHeightBehavior (applyHeightToFirstAscent: false, applyHeightToLastDescent: false)
+        // and height: 1.0, fontSize 10 should render as approximately 10px tall
+        // The visual center might be slightly less than fontSize/2 due to how text renders
+        // If text appears below dot, the center offset is too large - using a smaller value
+        // Adjust this value: if text is below dot, decrease it; if above, increase it
+        const textCenterOffset =
+            4.5; // Slightly less than 5px (fontSize/2) to account for text rendering
+
+        // Calculate dot's y position on the chart
+        // normalizedValue: 0.0 = min (bottom), 1.0 = max (top)
+        final normalizedValue = _chartDataPoints![_selectedPointIndex!];
+        // Y coordinate: invert so higher values appear at top
+        // This matches exactly how the dot is drawn in the painter:
+        // selectedY = size.height - (points[selectedPointIndex!] * size.height)
+        final dotY =
+            constraints.maxHeight - (normalizedValue * constraints.maxHeight);
+
+        // Calculate where text top should be so its center aligns with dot
+        // The dot's center is at dotY, so we want the text's center at dotY
+        // textTop + textCenterOffset = dotY
+        // Therefore: textTop = dotY - textCenterOffset
+        // Note: If text appears below dot, textCenterOffset might be too large
+        // If text appears above dot, textCenterOffset might be too small
+        final textTop = dotY - textCenterOffset;
+        final textBottom = dotY + textCenterOffset;
+
+        // Determine final alignment: center on dot unless text would overflow
+        double finalAlignmentY;
+        if (textTop < 0) {
+          // Text would overflow top edge - stick to top
+          finalAlignmentY = -1.0;
+        } else if (textBottom > constraints.maxHeight) {
+          // Text would overflow bottom edge - stick to bottom
+          finalAlignmentY = 1.0;
+        } else {
+          // Text fits - center on dot
+          finalAlignmentY = 0.0;
+        }
+
+        // Use Stack with Positioned for precise positioning
+        if (finalAlignmentY == 0.0) {
+          // Center on dot: position text so its visual center aligns with dot
+          // The text's visual center should be at dotY
+          // We position the text at textTop so that textTop + textCenterOffset = dotY
+          // textTop = dotY - 5 (for fontSize 10, center is at 5px from top)
+          return Stack(
+            children: [
+              Positioned(
+                top: textTop,
+                left: 0,
+                right: 0,
+                child: priceTextWidget,
+              ),
+            ],
+          );
+        } else {
+          // Edge case: align to edge
+          return Align(
+            alignment: Alignment(0.0, finalAlignmentY),
+            child: priceTextWidget,
+          );
+        }
+      },
+    );
   }
 
   /// Build timestamp widget with proper styling for min1 resolution
@@ -650,6 +1266,13 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
 
           // Reverse the array - API likely returns newest-first, but we need oldest-first for chart
           priceDataPoints = priceDataPoints.reversed.toList();
+
+          // Store original data for point selection
+          setState(() {
+            _originalChartData =
+                List<Map<String, dynamic>>.from(priceDataPoints);
+            _selectedPointIndex = null;
+          });
 
           // Extract prices and timestamps from valid data points
           var prices =
@@ -1546,6 +2169,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                   const SizedBox(height: 15),
                                   Expanded(
                                     child: Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                                       children: [
                                         Expanded(
                                           child: Column(
@@ -1573,12 +2198,81 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                                                   null &&
                                                               _chartDataPoints!
                                                                   .isNotEmpty)
-                                                          ? CustomPaint(
-                                                              painter:
-                                                                  DiagonalLinePainter(
-                                                                dataPoints:
-                                                                    _chartDataPoints,
-                                                              ),
+                                                          ? LayoutBuilder(
+                                                              builder: (context,
+                                                                  constraints) {
+                                                                final chartSize =
+                                                                    Size(
+                                                                  constraints.maxWidth
+                                                                              .isFinite &&
+                                                                          constraints.maxWidth >
+                                                                              0
+                                                                      ? constraints
+                                                                          .maxWidth
+                                                                      : 100.0,
+                                                                  constraints.maxHeight
+                                                                              .isFinite &&
+                                                                          constraints.maxHeight >
+                                                                              0
+                                                                      ? constraints
+                                                                          .maxHeight
+                                                                      : 100.0,
+                                                                );
+
+                                                                return MouseRegion(
+                                                                  onHover:
+                                                                      (event) {
+                                                                    _handleChartPointer(
+                                                                        event
+                                                                            .localPosition,
+                                                                        chartSize);
+                                                                  },
+                                                                  onExit:
+                                                                      (event) {
+                                                                    setState(
+                                                                        () {
+                                                                      _selectedPointIndex =
+                                                                          null;
+                                                                    });
+                                                                  },
+                                                                  child:
+                                                                      GestureDetector(
+                                                                    onPanUpdate:
+                                                                        (details) {
+                                                                      _handleChartPointer(
+                                                                          details
+                                                                              .localPosition,
+                                                                          chartSize);
+                                                                    },
+                                                                    onPanEnd:
+                                                                        (details) {
+                                                                      setState(
+                                                                          () {
+                                                                        _selectedPointIndex =
+                                                                            null;
+                                                                      });
+                                                                    },
+                                                                    onPanCancel:
+                                                                        () {
+                                                                      setState(
+                                                                          () {
+                                                                        _selectedPointIndex =
+                                                                            null;
+                                                                      });
+                                                                    },
+                                                                    child:
+                                                                        CustomPaint(
+                                                                      painter:
+                                                                          DiagonalLinePainter(
+                                                                        dataPoints:
+                                                                            _chartDataPoints,
+                                                                        selectedPointIndex:
+                                                                            _selectedPointIndex,
+                                                                      ),
+                                                                    ),
+                                                                  ),
+                                                                );
+                                                              },
                                                             )
                                                           : Container(
                                                               // Transparent container to maintain layout
@@ -1611,55 +2305,59 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                               SizedBox(
                                                 height:
                                                     15.0, // Fixed height to prevent layout shift
-                                                child: Row(
-                                                  mainAxisAlignment:
-                                                      MainAxisAlignment
-                                                          .spaceBetween,
-                                                  crossAxisAlignment:
-                                                      CrossAxisAlignment.center,
-                                                  children: [
-                                                    _buildTimestampWidget(
-                                                        _chartFirstTimestamp),
-                                                    _buildTimestampWidget(
-                                                        _chartLastTimestamp),
-                                                  ],
-                                                ),
+                                                child: _selectedPointIndex != null &&
+                                                        _originalChartData !=
+                                                            null &&
+                                                        _selectedPointIndex! <
+                                                            _originalChartData!
+                                                                .length
+                                                    ? _buildSelectedPointTimestampRow()
+                                                    : Row(
+                                                        mainAxisAlignment:
+                                                            MainAxisAlignment
+                                                                .spaceBetween,
+                                                        crossAxisAlignment:
+                                                            CrossAxisAlignment
+                                                                .center,
+                                                        children: [
+                                                          _buildTimestampWidget(
+                                                              _chartFirstTimestamp),
+                                                          _buildTimestampWidget(
+                                                              _chartLastTimestamp),
+                                                        ],
+                                                      ),
                                               )
                                             ],
                                           ),
                                         ),
                                         const SizedBox(width: 5),
-                                        Column(
-                                          mainAxisAlignment:
-                                              MainAxisAlignment.spaceBetween,
-                                          children: [
-                                            Text(
-                                              _chartMaxPrice != null
-                                                  ? _formatPrice(
-                                                      _chartMaxPrice!)
-                                                  : "0.00000",
-                                              style: const TextStyle(
-                                                  color: Color(0xFF818181),
-                                                  fontSize: 10),
-                                            ),
-                                            Column(
-                                              children: [
-                                                Text(
-                                                  _chartMinPrice != null
-                                                      ? _formatPrice(
-                                                          _chartMinPrice!)
-                                                      : "0.00000",
-                                                  style: const TextStyle(
-                                                    color: Color(0xFF818181),
-                                                    fontSize: 10,
-                                                  ),
-                                                ),
-                                                const SizedBox(
-                                                  height: 15,
-                                                )
-                                              ],
-                                            )
-                                          ],
+                                        // Price column: height = chart space (from max point to min point), top-aligned
+                                        // The chart is in an Expanded Column, so we use LayoutBuilder
+                                        // to get the actual chart height
+                                        LayoutBuilder(
+                                          builder: (context, rowConstraints) {
+                                            // The Row contains: Expanded Column + SizedBox(width: 5) + price column
+                                            // The Column contains: Expanded (chart) + SizedBox(5px) + SizedBox(15px timestamps)
+                                            // Chart space = Expanded widget height = Row height - 5px (spacing) - 15px (timestamps)
+                                            // Price column height = chart space (full height from max to min point)
+                                            final chartSpaceHeight =
+                                                rowConstraints.maxHeight -
+                                                    5.0 -
+                                                    15.0;
+
+                                            return SizedBox(
+                                              width: _calculateMaxPriceWidth(),
+                                              height: chartSpaceHeight,
+                                              child: _selectedPointIndex != null &&
+                                                      _originalChartData !=
+                                                          null &&
+                                                      _selectedPointIndex! <
+                                                          _originalChartData!
+                                                              .length
+                                                  ? _buildSelectedPointPriceColumn()
+                                                  : _buildNormalPriceColumn(),
+                                            );
+                                          },
                                         ),
                                       ],
                                     ),
