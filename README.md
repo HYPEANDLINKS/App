@@ -5,7 +5,7 @@ This is a monorepo containing multiple services.
 ## Repository Structure
 
 ```
-xp7kbot/
+bc1qbot/
 ├── front/          # Flutter frontend
 ├── ai/             # AI chat backend (FastAPI + Ollama)
 └── rag/            # RAG server (TON data RAG system) - TODO
