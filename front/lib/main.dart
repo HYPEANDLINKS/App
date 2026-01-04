@@ -2857,14 +2857,15 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       },
       child: Container(
         height: 20,
-        constraints: const BoxConstraints(minWidth: 20),
-        padding: const EdgeInsets.symmetric(horizontal: 10),
+        width: 30, // Fixed width to prevent layout shifts
         alignment: Alignment.center,
         child: Text(
           key,
           style: TextStyle(
-            fontWeight: isSelected ? FontWeight.normal : FontWeight.w500,
-            color: isSelected ? AppTheme.textColor : const Color(0xFF818181),
+            fontWeight: FontWeight.w500, // Always medium
+            color: isSelected 
+                ? (AppTheme.isDarkTheme ? const Color(0xFFFAFAFA) : const Color(0xFF111111))
+                : const Color(0xFF818181),
             fontSize: 15,
           ),
         ),
@@ -4246,10 +4247,10 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                       children: [
                                       LayoutBuilder(
                                         builder: (context, constraints) {
-                                          // Measure text width
-                                          final textPainter = TextPainter(
+                                          // Always measure text width using the longest label "(Hour)" to prevent layout shifts
+                                          final leftTextPainter = TextPainter(
                                             text: TextSpan(
-                                              text: 'Toncoin ${_getResolutionLabel()}',
+                                              text: 'Toncoin (Hour)', // Always use longest text for positioning
                                               style: TextStyle(
                                                 fontWeight: FontWeight.w400,
                                                 color: AppTheme.textColor,
@@ -4258,19 +4259,41 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                             ),
                                             textDirection: TextDirection.ltr,
                                           );
-                                          textPainter.layout();
-                                          final textWidth = textPainter.size.width;
+                                          leftTextPainter.layout();
+                                          final leftTextWidth = leftTextPainter.size.width;
                                           
-                                          // Approximate selector width: 4 buttons * 40px + 10px padding = 170px
-                                          const selectorWidth = 170.0;
+                                          // Measure price text width
+                                          final priceText = _priceUsd != null
+                                              ? '\$${_formatPrice(_priceUsd!)}'
+                                              : '\$...';
+                                          final priceTextPainter = TextPainter(
+                                            text: TextSpan(
+                                              text: priceText,
+                                              style: TextStyle(
+                                                fontWeight: FontWeight.w400,
+                                                color: AppTheme.textColor,
+                                                fontSize: 20,
+                                              ),
+                                            ),
+                                            textDirection: TextDirection.ltr,
+                                          );
+                                          priceTextPainter.layout();
+                                          final priceTextWidth = priceTextPainter.size.width;
+                                          
+                                          // Approximate selector width: 4 buttons * 30px + spacing = ~130px
+                                          const selectorWidth = 130.0;
                                           const leftPadding = 5.0;
                                           
                                           // Check if centered selector would overlap text
                                           final centerX = constraints.maxWidth / 2;
                                           final selectorLeftEdge = centerX - selectorWidth / 2;
-                                          final textRightEdge = textWidth;
+                                          final leftTextRightEdge = leftTextWidth;
                                           
-                                          final shouldCenter = selectorLeftEdge >= textRightEdge + leftPadding;
+                                          final shouldCenter = selectorLeftEdge >= leftTextRightEdge + leftPadding;
+                                          
+                                          // Calculate center position between left text and price text
+                                          final availableSpace = constraints.maxWidth - leftTextWidth - priceTextWidth;
+                                          final spaceCenter = leftTextWidth + availableSpace / 2;
                                           
                                           return Stack(
                                             alignment: Alignment.center,
@@ -4286,9 +4309,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                                       )),
                                                   const SizedBox.shrink(),
                                                   Text(
-                                                    _priceUsd != null
-                                                        ? '\$${_formatPrice(_priceUsd!)}'
-                                                        : '\$...',
+                                                    priceText,
                                                     style: TextStyle(
                                                       fontWeight: FontWeight.w400,
                                                       color: AppTheme.textColor,
@@ -4311,7 +4332,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                                       ),
                                                     )
                                                   : Positioned(
-                                                      left: textRightEdge + leftPadding,
+                                                      left: spaceCenter - selectorWidth / 2,
                                                       child: Padding(
                                                         padding: const EdgeInsets.symmetric(horizontal: 5),
                                                         child: Row(
