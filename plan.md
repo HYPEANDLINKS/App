@@ -1,7 +1,8 @@
-Theme in ChDorome
+Wallet creation and nickname generation
+Jetton lockup
+Theme in Chrome
 Favicon change
 Bd
-Nickname generation
 Bot
 Wallet creation
 Fix AI
