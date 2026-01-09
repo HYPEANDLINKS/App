@@ -50,6 +50,13 @@ class _SimpleMainPageState extends State<SimpleMainPage>
     
     return [
       {
+        'icon': r'assets/sample/mak/+1$.svg',
+        'primaryText': 'Incoming task',
+        'secondaryText': 'Send link with \$1 to get \$1',
+        'timestamp': '17:11',
+        'rightText': 'N/A',
+      },
+      {
         'icon': 'assets/sample/DLLR.svg',
         'primaryText': 'Token granted',
         'secondaryText': '\$1',
@@ -69,6 +76,19 @@ class _SimpleMainPageState extends State<SimpleMainPage>
         'secondaryText': "We've created a wallet for you.",
         'timestamp': '7:55',
         'rightText': null,
+      },
+    ];
+  }
+
+  // Tasks items data with SVG images
+  List<Map<String, dynamic>> get _tasksItems {
+    return [
+      {
+        'icon': r'assets/sample/mak/+1$.svg',
+        'primaryText': 'Incoming task',
+        'secondaryText': 'Send link with \$1 to get \$1',
+        'timestamp': '17:11',
+        'rightText': 'N/A',
       },
     ];
   }
@@ -852,19 +872,151 @@ class _SimpleMainPageState extends State<SimpleMainPage>
                                 );
                               }).toList(),
                             ),
-                          // Play content - shown when Play tab is selected
-                          // if (_selectedTab == 'Tasks')
-                          //   const Center(
-                          //     child: Text(
-                          //       'Tasks',
-                          //       style: TextStyle(
-                          //         fontFamily: 'Aeroport',
-                          //         fontSize: 20,
-                          //         fontWeight: FontWeight.w500,
-                          //         color: Color(0xFF818181),
-                          //       ),
-                          //     ),
-                          //   ),
+                          // Tasks list - shown when Tasks tab is selected
+                          if (_selectedTab == 'Tasks')
+                            Column(
+                              children: _tasksItems.map((item) {
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 20),
+                                  child: Container(
+                                    padding:
+                                        const EdgeInsets.symmetric(vertical: 0),
+                                    child: Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.center,
+                                      children: [
+                                        // Task item icon - 30px, centered vertically relative to 40px text columns
+                                        SvgPicture.asset(
+                                          item['icon'] as String,
+                                          width: 30,
+                                          height: 30,
+                                          fit: BoxFit.contain,
+                                        ),
+                                        const SizedBox(width: 10),
+                                        // Primary and secondary text column
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              SizedBox(
+                                                height: 20,
+                                                child: Align(
+                                                  alignment:
+                                                      Alignment.centerLeft,
+                                                  child: Text(
+                                                    item['primaryText'] as String,
+                                                    style: TextStyle(
+                                                      fontFamily: 'Aeroport',
+                                                      fontSize: 15,
+                                                      fontWeight:
+                                                          FontWeight.w500,
+                                                      color: AppTheme.textColor,
+                                                      height: 1.0,
+                                                    ),
+                                                    textHeightBehavior:
+                                                        const TextHeightBehavior(
+                                                      applyHeightToFirstAscent:
+                                                          false,
+                                                      applyHeightToLastDescent:
+                                                          false,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                              SizedBox(
+                                                height: 20,
+                                                child: Align(
+                                                  alignment:
+                                                      Alignment.centerLeft,
+                                                  child: Text(
+                                                    item['secondaryText'] as String,
+                                                    style: const TextStyle(
+                                                      fontFamily: 'Aeroport',
+                                                      fontSize: 15,
+                                                      fontWeight:
+                                                          FontWeight.w400,
+                                                      color: Color(0xFF818181),
+                                                      height: 1.0,
+                                                    ),
+                                                    textHeightBehavior:
+                                                        const TextHeightBehavior(
+                                                      applyHeightToFirstAscent:
+                                                          false,
+                                                      applyHeightToLastDescent:
+                                                          false,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        // Timestamp and right text column (right-aligned)
+                                        Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.end,
+                                          children: [
+                                            SizedBox(
+                                              height: 20,
+                                              child: Align(
+                                                alignment:
+                                                    Alignment.centerRight,
+                                                child: Text(
+                                                  item['timestamp'] as String,
+                                                  style: TextStyle(
+                                                    fontFamily: 'Aeroport',
+                                                    fontSize: 15,
+                                                    fontWeight: FontWeight.w500, // medium
+                                                    color: AppTheme.textColor,
+                                                    height: 1.0,
+                                                  ),
+                                                  textAlign: TextAlign.right,
+                                                  textHeightBehavior:
+                                                      const TextHeightBehavior(
+                                                    applyHeightToFirstAscent:
+                                                        false,
+                                                    applyHeightToLastDescent:
+                                                        false,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                            SizedBox(
+                                              height: 20,
+                                              child: item['rightText'] != null
+                                                  ? Align(
+                                                      alignment:
+                                                          Alignment.centerRight,
+                                                      child: Text(
+                                                        item['rightText'] as String,
+                                                        style: const TextStyle(
+                                                          fontFamily: 'Aeroport',
+                                                          fontSize: 15,
+                                                          fontWeight: FontWeight.w400,
+                                                          color: Color(0xFF818181),
+                                                          height: 1.0,
+                                                        ),
+                                                        textAlign: TextAlign.right,
+                                                        textHeightBehavior:
+                                                            const TextHeightBehavior(
+                                                          applyHeightToFirstAscent:
+                                                              false,
+                                                          applyHeightToLastDescent:
+                                                              false,
+                                                        ),
+                                                      ),
+                                                    )
+                                                  : const SizedBox.shrink(),
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              }).toList(),
+                            ),
                           // Items grid - shown when Items tab is selected
                           if (_selectedTab == 'Items')
                             Padding(

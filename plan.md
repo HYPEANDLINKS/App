@@ -1,13 +1,15 @@
+Bot
 Wallet creation and nickname generation
 Jetton lockup
 Theme in Chrome
 Favicon change
 Bd
-Bot
 Wallet creation
 Fix AI
 Apps design
 Plan users bd for search
+
+Brand book
 
 Fix
 Starting Rewards
